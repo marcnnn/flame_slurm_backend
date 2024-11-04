@@ -48,10 +48,10 @@ defmodule FLAMESlurmBackend.SlurmClient do
     {"", 0} = System.cmd("scancel", ["#{job_id}"])
   end
 
-  def start_job!(parent_ref, _timeout) do
+  def start_job!(parent_ref, slurm_job, _timeout) do
 
     parent =
-      FLAME.Parent.new(parent_ref, self(), FLAMESlurmBackend, "", "HOSTNAME")
+      FLAME.Parent.new(parent_ref, self(), FLAMESlurmBackend, nil, "SLURM_FLAME_HOST")
 
     parent =
       case System.get_env("FLAME_SLURM_BACKEND_GIT_REF") do
@@ -66,10 +66,19 @@ defmodule FLAMESlurmBackend.SlurmClient do
       {"FLAME_PARENT", encoded_parent},
       {"ELIXIR_SLURM_SCRIPT", @elixir_slurm_script},
     ]
+    file = File.open!("flame_auto.sh", [:write])
+
+    IO.puts(file, slurm_job)
+    IO.puts(file, """
+    elixir -e "$ELIXIR_SLURM_SCRIPT"
+    """)
+
+    File.close(file)
+    System.cmd("chmod", ["+x","flame_auto.sh"])
 
     args = [
       "--export=ALL",
-      "flame.sh" #--partition=gpu --gpus-per-node=1
+      "flame_auto.sh"
     ]
 
     job_id = System.cmd("sbatch",args,env: env)

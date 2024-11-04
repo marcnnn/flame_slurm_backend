@@ -6,17 +6,66 @@ defmodule FLAMESlurmBackend do
 
   Configure the flame backend in our configuration or application setup:
 
+  write a jobscript
+  ```
+  #!/bin/bash
+  #SBATCH -o flame.%j.out
+  #SBATCH --nodes=1
+  #SBATCH --ntasks-per-node=1
+  #SBATCH --time=01:00:00
+
+  export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+  ```
+
+  setting a Partition with GPU instances and 1 GPU per job
+  ```
+  #SBATCH --partition=gpu
+  #SBATCH --gpus-per-node=1
+  ```
+
+
   ```
   # application.ex
   children = [
     {FLAME.Pool,
       name: MyApp.SamplePool,
-      backend: FLAMESlurmBackend,
       min: 0,
       max: 10,
       max_concurrency: 5,
-      idle_shutdown_after: 30_000}
+      idle_shutdown_after: 30_000,
+      backend: {
+        FLAMESlurmBackend,
+        slurm_job: <jobscript>
+      }
+      }
   ]
+  ```
+
+  when running inside a Livebook:
+
+  Start the Livebook with a matching Host part of the Erlang long name:
+  Using LIVEBOOK_IP=0.0.0.0 is helpful if you create a portforwarding from the login Host of the Cluster.
+
+  ```
+  #!/bin/bash
+  export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+  epmd -daemon
+  LIVEBOOK_IP=0.0.0.0 livebook server --name livebook@$SLURM_FLAME_HOST
+  ```
+
+  ```
+  Kino.start_child(
+    {FLAME.Pool,
+     name: :runner,
+     code_sync: [start_apps: true, sync_beams: Kino.beam_paths(), compress: false],
+     min: 0,
+     max: 1,
+     max_concurrency: 10,
+     idle_shutdown_after: :timer.minutes(1),
+     timeout: :infinity,
+     track_resources: true,
+     backend: {FLAMESlurmBackend, slurm_job: <jobscript>}}
+  )
   ```
 
 
@@ -31,9 +80,10 @@ defmodule FLAMESlurmBackend do
             runner_node_name: nil,
             boot_timeout: nil,
             remote_terminator_pid: nil,
-            log: false
+            log: false,
+            slurm_job: nil
 
-  @valid_opts ~w(terminator_sup log boot_timeout)a
+  @valid_opts ~w(slurm_job terminator_sup log boot_timeout)a
   @required_config ~w()a
 
   @impl true
@@ -42,7 +92,15 @@ defmodule FLAMESlurmBackend do
     [_node_base | _ip] = node() |> to_string() |> String.split("@")
 
     default = %FLAMESlurmBackend{
-      boot_timeout: 30_000
+      boot_timeout: 30_000,
+      slurm_job: ~S"""
+#!/bin/bash
+#SBATCH -o flame.%j.out
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=01:00:00
+export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+"""
     }
 
     provided_opts =
@@ -99,14 +157,14 @@ defmodule FLAMESlurmBackend do
     {{new_state,job_id}, req_connect_time} =
       with_elapsed_ms(fn ->
         created_job =
-          SlurmClient.start_job!(parent_ref, state.boot_timeout)
+          SlurmClient.start_job!(parent_ref, state.slurm_job, state.boot_timeout)
 
         case created_job do
           {:ok, job} ->
             log(state, "Job queued", job_id: job)
             {state, job}
 
-          :error ->
+          _ ->
             Logger.error("failed to schedule runner pod within #{state.boot_timeout}ms")
             exit(:timeout)
         end
