@@ -9,15 +9,15 @@ defmodule FLAMESlurmBackend.SlurmClient do
     %{
       pid: parent_pid,
       flame_vsn: flame_parent_vsn,
-      backend: _backend,
       backend_app: backend_app,
       backend_vsn: backend_vsn,
-      node_base: _node_base,
       host_env: host_env
     } = flame_parent
 
-    flame_node_name = :"FLAME_SLURM_JOB_ID_#{System.fetch_env!("SLURM_JOB_ID")}@#{System.fetch_env!(host_env)}"
-    flame_node_cookie = String.to_atom(System.fetch_env!("LIVEBOOK_COOKIE"))
+    flame_base_name = "FLAME_SLURM_JOB_ID_#{System.fetch_env!("SLURM_JOB_ID")}"
+    flame_host_name = System.get_env(host_env)
+    flame_node_name = if flame_host_name, do: :"#{flame_base_name}@#{flame_host_name}", else: :"#{flame_base_name}"
+    flame_node_cookie = String.to_atom(System.fetch_env!("SLURM_COOKIE"))
 
     flame_dep =
       if git_ref = System.get_env("FLAME_GIT_REF") do
@@ -26,21 +26,13 @@ defmodule FLAMESlurmBackend.SlurmClient do
         {:flame, flame_parent_vsn}
       end
 
-    flame_backend_deps =
-      case backend_app do
-        :flame -> []
-        _ -> [{backend_app, backend_vsn}]
-      end
+    flame_backend_dep = {:flame_slurm_backend, github: "marcnnn/flame_slurm_backend"}
 
     {:ok, _} = :net_kernel.start(flame_node_name, %{name_domain: :longnames})
     Node.set_cookie(flame_node_cookie)
 
-    Mix.install([flame_dep | [{:flame_slurm_backend,github: "marcnnn/flame_slurm_backend"}]], consolidate_protocols: false)
-
-    IO.puts(
-      "[Livebook] starting #{inspect(flame_node_name)} in FLAME mode with parent: #{inspect(parent_pid)}, backend: #{inspect(backend_app)}"
-    )
-
+    Mix.install([flame_dep, flame_backend_dep], consolidate_protocols: false)
+    IO.puts("[Slurm] Starting #{inspect(flame_node_name)} with parent #{inspect(parent_pid)}")
     System.no_halt(true)
   end)
 
@@ -49,7 +41,6 @@ defmodule FLAMESlurmBackend.SlurmClient do
   end
 
   def start_job!(parent_ref, slurm_job, _timeout) do
-
     parent =
       FLAME.Parent.new(parent_ref, self(), FLAMESlurmBackend, nil, "SLURM_FLAME_HOST")
 
@@ -62,7 +53,7 @@ defmodule FLAMESlurmBackend.SlurmClient do
     encoded_parent = FLAME.Parent.encode(parent)
 
     env = [
-      {"LIVEBOOK_COOKIE", "#{Node.get_cookie()}"},
+      {"SLURM_COOKIE", "#{Node.get_cookie()}"},
       {"FLAME_PARENT", encoded_parent},
       {"ELIXIR_SLURM_SCRIPT", @elixir_slurm_script},
     ]
@@ -82,10 +73,9 @@ defmodule FLAMESlurmBackend.SlurmClient do
     ]
 
     job_id = System.cmd("sbatch",args,env: env)
-    |> case do {"Submitted batch job "<>id, 0} -> id end
+    |> case do {"Submitted batch job " <> id, 0} -> id end
     |> Integer.parse()
     |> case do {i, _} -> i end
     {:ok, job_id}
   end
-
 end
