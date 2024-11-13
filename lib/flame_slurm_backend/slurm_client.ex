@@ -78,4 +78,8 @@ defmodule FLAMESlurmBackend.SlurmClient do
     |> case do {i, _} -> i end
     {:ok, job_id}
   end
+
+  def path_job_id path do
+    path <> System.get_env("SLURM_JOBID")
+  end
 end
