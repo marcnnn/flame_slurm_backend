@@ -1,6 +1,6 @@
 # FLAMESlurmBackend
 
-
+The Flame Slurm Backend allows to use FLAME on SLURM HPC Clusters.
 
 ## Installation
 
@@ -26,8 +26,42 @@ Configure the flame backend in our configuration or application setup:
       max: 10,
       max_concurrency: 5,
       idle_shutdown_after: 30_000,
-      log: :debug}
+      slurm_job: """
+      #!/bin/bash
+      #SBATCH -o flame.%j.out
+      #SBATCH --nodes=1
+      #SBATCH --ntasks-per-node=1
+      #SBATCH --time=01:00:00
+
+      export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+      """
+    }
   ]
+```
+
+The `slurm_job` defines the Slurm job that will run on each spawned machine.
+
+The `SLURM_FLAME_HOST` environment variable is also explicitly customize to the infiniband interface, which will be used by the Erlang VM Distribution layer for low latency and high bandwidth communication:
+
+```bash
+export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+```
+
+You will need to start the parent Erlang VM (the one that configures FLAME) with the same configuration. If you are using Livebook, here is a script that starts on a CUDA 12.5 with CUDNN in `$HOME`:
+
+```bash
+#!/bin/bash
+export CUDA=/usr/local/cuda-12.5/
+export CUDNN=$HOME/cudnn-linux-x86_64-9.5.0.50_cuda12-archive/
+export PATH=$PATH:$CUDA/bin
+export CPATH=$CPATH:$CUDNN/include:$CUDA/include
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CUDNN/lib
+export MIX_INSTALL_DIR=$WORK/mix-cache
+
+export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+
+epmd -daemon
+LIVEBOOK_IP=0.0.0.0 LIVEBOOK_PASSWORD=***** MIX_ENV=prod livebook server --name livebook@$SLURM_FLAME_HOST
 ```
 
 ## Prerequisites
@@ -48,5 +82,13 @@ This Job will than be scheduled if ressoucces are avaiable.
 If it not scheduled within the timeout the job is canceled to not block ressourcess that are no longer needed.
 To be able to run the runner with the correct enviorment cluster specific bash file needs to be created.
 
+# Cleanup
+
+On some clusters TMPDIR is cleaned per Job on others not.
+This is why `TMPDIR` is changed to one based on the Job ID, which is automatically cleared when the Job terminates. More precisely, Slurm is automatically configured to send a SIGTERM signal to FLAME 30 seconds before it terminates the Job, which then deletes the directory.
+
+# Long running Jobs
+
+If your job time is limited, Slurm will kill the Job while it is running. There are no mechanisms at the moment to not use the runner if time is about to run out. This would be a well appreciated contribution! Be aware that you might lose data because of this.
 
 ## Troubleshooting
