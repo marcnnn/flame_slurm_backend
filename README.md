@@ -2,7 +2,6 @@
 
 The Flame Slurm Backend allows to use FLAME on SLURM HPC Clusters.
 
-
 ## Installation
 
 ```elixir
@@ -40,16 +39,16 @@ Configure the flame backend in our configuration or application setup:
   ]
 ```
 
-This part of the Job definition defines the Host part of the Flame Child Beam.
-In this case the IP of teh infiniband interface is used so that the beam disribution Protokoll
-is communicating over the infiniband IP interface to allow low latency and high bandwith communication.
+The `slurm_job` defines the Slurm job that will run on each spawned machine.
+
+The `SLURM_FLAME_HOST` environment variable is also explicitly customize to the infiniband interface, which will be used by the Erlang VM Distribution layer for low latency and high bandwidth communication:
 
 ```bash
 export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
 ```
-You need to start the Parent Beam with the same configuration.
 
-Example Livebook start on a CUDA 12.5 Node with CUDNN in $HOME for NX ELXA Backend:
+You will need to start the parent Erlang VM (the one that configures FLAME) with the same configuration. If you are using Livebook, here is a script that starts on a CUDA 12.5 with CUDNN in `$HOME`:
+
 ```bash
 #!/bin/bash
 export CUDA=/usr/local/cuda-12.5/
@@ -58,11 +57,9 @@ export PATH=$PATH:$CUDA/bin
 export CPATH=$CPATH:$CUDNN/include:$CUDA/include
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CUDNN/lib
 export MIX_INSTALL_DIR=$WORK/mix-cache
-export LB_HF_TOKEN=hf_*****
 
 export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
 
-export BUMBLEBEE_CACHE_DIR=$WORK/bumblebee/
 epmd -daemon
 LIVEBOOK_IP=0.0.0.0 LIVEBOOK_PASSWORD=***** MIX_ENV=prod livebook server --name livebook@$SLURM_FLAME_HOST
 ```
@@ -92,11 +89,6 @@ This is why TMPDIR is changed to one based on the Job ID and deleted after SIGUS
 
 # Long running Jobs
 
-If your Job time is Limited Slurm will kill the Job with the Flame runner.
-There are no mechanisims in place to not use the runner if time is about to run out.
-
-This would be a well appriciated contribution!
-
-Be aware that you might loose Data because of this.
+If your job time is limited, Slurm will kill the Job while it is running. There are no mechanisms at the moment to not use the runner if time is about to run out. This would be a well appreciated contribution! Be aware that you might lose data because of this.
 
 ## Troubleshooting
