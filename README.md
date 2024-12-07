@@ -85,7 +85,7 @@ To be able to run the runner with the correct enviorment cluster specific bash f
 # Cleanup
 
 On some clusters TMPDIR is cleaned per Job on others not.
-This is why TMPDIR is changed to one based on the Job ID and deleted after SIGUSR1 is send by SLURM this is Configured by default in Flame SLurm to 30 Seconds before kill.
+This is why `TMPDIR` is changed to one based on the Job ID, which is automatically cleared when the Job terminates. More precisely, Slurm is automatically configured to send a SIGTERM signal to FLAME 30 seconds before it terminates the Job, which then deletes the directory.
 
 # Long running Jobs
 

@@ -60,11 +60,11 @@ defmodule FLAMESlurmBackend.SlurmClient do
     file = File.open!("flame_auto.sh", [:write])
 
     IO.puts(file, slurm_job)
-    # Ask SLURM to signal 30 sec before kill to send SIGUSR1 to shutdown BEAM
+    # Ask SLURM to signal 30 sec before kill to send SIGTERM to gracefully shutdown
     # Adds a folder in the TMPDIR and changes $TMPDIR to it
     # to be able to delete it after the job
     IO.puts(file, """
-#SBATCH --signal=B:SIGUSR1@30
+#SBATCH --signal=B:SIGTERM@30
 mkdir $TMPDIR/$SLURMJOBID
 export TMPDIR=$TMPDIR/$SLURMJOBID
 """)
