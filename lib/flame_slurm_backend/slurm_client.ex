@@ -61,21 +61,10 @@ defmodule FLAMESlurmBackend.SlurmClient do
 
     IO.puts(file, slurm_job)
     # Ask SLURM to signal 30 sec before kill to send SIGTERM to gracefully shutdown
-    # Adds a folder in the TMPDIR and changes $TMPDIR to it
-    # to be able to delete it after the job
     IO.puts(file, """
-#SBATCH --signal=B:SIGTERM@30
-mkdir $TMPDIR/$SLURMJOBID
-export TMPDIR=$TMPDIR/$SLURMJOBID
-""")
-    IO.puts(file, """
-elixir -e "$ELIXIR_SLURM_SCRIPT"
-""")
-    # remove the TMP folder
-    # this should be called since SLURM sends
-    IO.puts(file, """
-rm -rf $TMPDIR/$SLURMJOBID
-""")
+    #SBATCH --signal=B:SIGTERM@30
+    elixir -e "$ELIXIR_SLURM_SCRIPT"
+    """)
     File.close(file)
     System.cmd("chmod", ["+x","flame_auto.sh"])
 

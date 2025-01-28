@@ -84,8 +84,12 @@ To be able to run the runner with the correct enviorment cluster specific bash f
 
 # Cleanup
 
-On some clusters TMPDIR is cleaned per Job on others not.
-This is why `TMPDIR` is changed to one based on the Job ID, which is automatically cleared when the Job terminates. More precisely, Slurm is automatically configured to send a SIGTERM signal to FLAME 30 seconds before it terminates the Job, which then deletes the directory.
+Slurm is configured to send a SIGTERM signal to FLAME 30 seconds before it terminates the Job, so it starts performing any cleaning up of Flame temporary Files.
+
+If your Slurm cluster is not configured to delete the tmp folder you can use OTP supervisors and delete artifacts that you create on termination.
+
+This implementation in Flame is a good reference how to do that:
+https://github.com/phoenixframework/flame/commit/e64ad84b695a7569a351b7e5717c27db97f2451c
 
 # Long running Jobs
 
