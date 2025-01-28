@@ -20,18 +20,31 @@ Configure the flame backend in our configuration or application setup:
   # application.ex
   children = [
     {FLAME.Pool,
-      name: MyApp.SamplePool,
-      backend: FLAMEKSlurmBackend,
-      min: 0,
-      max: 10,
-      max_concurrency: 5,
-      idle_shutdown_after: 30_000,
-      slurm_job: """
+    name: MyApp.SamplePool,
+    code_sync: [
+     start_apps: true,
+     sync_beams: Kino.beam_paths(),
+     compress: false,
+     extract_dir: {
+       FLAMESlurmBackend.SlurmClient,
+       :path_job_id,
+       [Path.absname("extract_dir")<>"/"]
+     } 
+   ],
+   min: 0,
+   max: 1,
+   max_concurrency: 1,
+   idle_shutdown_after: :timer.minutes(10),
+   timeout: :infinity,
+   boot_timeout: 360000,
+   track_resources: true,
+    slurm_job: """
       #!/bin/bash
       #SBATCH -o flame.%j.out
       #SBATCH --nodes=1
       #SBATCH --ntasks-per-node=1
       #SBATCH --time=01:00:00
+      #SBATCH --mem=20G
 
       export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
       """
