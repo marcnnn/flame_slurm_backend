@@ -60,10 +60,11 @@ defmodule FLAMESlurmBackend.SlurmClient do
     file = File.open!("flame_auto.sh", [:write])
 
     IO.puts(file, slurm_job)
+    # Ask SLURM to signal 30 sec before kill to send SIGTERM to gracefully shutdown
     IO.puts(file, """
+    #SBATCH --signal=B:SIGTERM@30
     elixir -e "$ELIXIR_SLURM_SCRIPT"
     """)
-
     File.close(file)
     System.cmd("chmod", ["+x","flame_auto.sh"])
 

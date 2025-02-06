@@ -1,7 +1,7 @@
 defmodule FlameSlurmBackend.MixProject do
   use Mix.Project
   @source_url "https://github.com/marcnnn/flame_slurm_backend"
-  @version "0.0.1"
+  @version "0.0.2"
 
   def project do
     [
@@ -14,7 +14,7 @@ defmodule FlameSlurmBackend.MixProject do
       deps: deps(),
       package: package(),
       docs: [
-        main: "readme",
+        main: "~> 0.4.0 orreadme",
         extras: ["README.md", "CHANGELOG.md"],
         source_ref: "v#{@version}",
         source_url: @source_url
@@ -32,7 +32,7 @@ defmodule FlameSlurmBackend.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:flame, "~> 0.4.0 or ~> 0.5.0"},
+      {:flame, "~> 0.5.0"},
       {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
