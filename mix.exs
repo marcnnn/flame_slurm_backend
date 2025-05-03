@@ -8,13 +8,13 @@ defmodule FlameSlurmBackend.MixProject do
       app: :flame_slurm_backend,
       description: "A FLAME backend for Slurm",
       version: @version,
-      elixir: "~> 1.17",
+      elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       package: package(),
       docs: [
-        main: "~> 0.4.0 orreadme",
+        main: "readme",
         extras: ["README.md", "CHANGELOG.md"],
         source_ref: "v#{@version}",
         source_url: @source_url
@@ -32,7 +32,7 @@ defmodule FlameSlurmBackend.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:flame, "~> 0.5.0"},
+      {:flame, "~> 0.5"},
       {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
@@ -44,9 +44,10 @@ defmodule FlameSlurmBackend.MixProject do
       maintainers: ["Marc Nickert"],
       licenses: ["MIT"],
       links: %{
-        "GitHub" => @source_url
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
       },
-      files: ["lib", "mix.exs", "README*", "LICENSE*", "CHANGELOG.md"]
+      files: ~w(lib mix.exs README.md LICENSE.md CHANGELOG.md)
     ]
   end
 
