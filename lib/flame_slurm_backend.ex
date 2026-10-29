@@ -94,27 +94,30 @@ defmodule FLAMESlurmBackend do
             runner_node_name: nil,
             boot_timeout: nil,
             remote_terminator_pid: nil,
+            job_id: nil,
+            job_poll_interval: 5_000,
+            boot_backoff_base: 1_000,
+            boot_backoff_max: 60_000,
             log: false,
             slurm_job: nil
 
-  @valid_opts ~w(slurm_job terminator_sup log boot_timeout)a
+  @valid_opts ~w(slurm_job terminator_sup log boot_timeout job_poll_interval boot_backoff_base boot_backoff_max)a
   @required_config ~w()a
 
   @impl true
   def init(opts) do
     conf = Application.get_env(:flame, __MODULE__) || []
-    [_node_base | _ip] = node() |> to_string() |> String.split("@")
 
     default = %FLAMESlurmBackend{
       boot_timeout: 30_000,
       slurm_job: ~S"""
-#!/bin/bash
-#SBATCH -o flame.%j.out
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --time=01:00:00
-export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
-"""
+      #!/bin/bash
+      #SBATCH -o flame.%j.out
+      #SBATCH --nodes=1
+      #SBATCH --ntasks-per-node=1
+      #SBATCH --time=01:00:00
+      export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
+      """
     }
 
     provided_opts =
@@ -130,16 +133,34 @@ export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | c
       end
     end
 
-    parent_ref = make_ref()
+    unless is_binary(state.slurm_job) do
+      raise ArgumentError, "expected :slurm_job to be a string, got: #{inspect(state.slurm_job)}"
+    end
 
+    unless state.boot_timeout == :infinity or
+             (is_integer(state.boot_timeout) and state.boot_timeout >= 0) do
+      raise ArgumentError,
+            "expected :boot_timeout to be a non-negative integer or :infinity, got: #{inspect(state.boot_timeout)}"
+    end
 
-    new_state =
-      struct(state,
-        parent_ref: parent_ref
-      )
+    # A zero interval would hammer slurmctld with squeue calls
+    unless is_integer(state.job_poll_interval) and state.job_poll_interval > 0 do
+      raise ArgumentError,
+            "expected :job_poll_interval to be a positive integer, got: #{inspect(state.job_poll_interval)}"
+    end
 
-    {:ok, new_state}
+    for key <- [:boot_backoff_base, :boot_backoff_max] do
+      value = Map.fetch!(state, key)
 
+      unless is_integer(value) and value >= 0 do
+        raise ArgumentError,
+              "expected #{inspect(key)} to be a non-negative integer, got: #{inspect(value)}"
+      end
+    end
+
+    state = if state.log == true, do: struct(state, log: :info), else: state
+
+    {:ok, struct(state, parent_ref: make_ref())}
   end
 
   @impl true
@@ -165,48 +186,109 @@ export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | c
   end
 
   @impl true
-  def remote_boot(%FLAMESlurmBackend{parent_ref: parent_ref} = state) do
+  def remote_boot(%FLAMESlurmBackend{} = state) do
+    case do_remote_boot(state) do
+      {:ok, _pid, _state} = ok ->
+        :persistent_term.erase(boot_failures_key(state))
+        ok
+
+      {:error, _reason} = error ->
+        backoff_after_failure(state)
+        error
+    end
+  end
+
+  # FLAME.Pool retries a failed boot about every second while callers wait, so
+  # a broken job script would flood slurmctld with submissions. Failures are
+  # counted per job script, since each retry gets a fresh backend state.
+  defp backoff_after_failure(state) do
+    key = boot_failures_key(state)
+    failures = :persistent_term.get(key, 0)
+    :persistent_term.put(key, failures + 1)
+    backoff = min(state.boot_backoff_base * 2 ** min(failures, 16), state.boot_backoff_max)
+    Logger.warning("Slurm runner boot failed #{failures + 1} time(s), retrying in #{backoff}ms")
+    Process.sleep(backoff)
+  end
+
+  defp boot_failures_key(state),
+    do: {__MODULE__, :boot_failures, :erlang.phash2(state.slurm_job)}
+
+  defp do_remote_boot(%FLAMESlurmBackend{parent_ref: parent_ref} = state) do
     log(state, "Remote Boot")
 
-    {{new_state,job_id}, req_connect_time} =
-      with_elapsed_ms(fn ->
-        created_job =
-          SlurmClient.start_job!(parent_ref, state.slurm_job, state.boot_timeout)
+    {created_job, req_connect_time} =
+      with_elapsed_ms(fn -> SlurmClient.start_job(parent_ref, state.slurm_job) end)
 
-        case created_job do
-          {:ok, job} ->
-            log(state, "Job queued", job_id: job)
-            {state, job}
+    case created_job do
+      {:ok, job_id} ->
+        log(state, "Job queued", job_id: job_id)
 
-          _ ->
-            Logger.error("failed to schedule runner pod within #{state.boot_timeout}ms")
-            exit(:timeout)
-        end
-      end)
+        deadline =
+          case state.boot_timeout do
+            :infinity ->
+              :infinity
 
-    remaining_connect_window = state.boot_timeout - req_connect_time
+            boot_timeout ->
+              remaining_connect_window = max(boot_timeout - req_connect_time, 0)
 
-    log(state, "Waiting for Remote UP.", remaining_connect_window: remaining_connect_window)
+              log(state, "Waiting for Remote UP.",
+                remaining_connect_window: remaining_connect_window
+              )
 
-    remote_terminator_pid =
-      receive do
-        {^parent_ref, {:remote_up, remote_terminator_pid}} ->
-          log(state, "Remote flame is Up!")
-          remote_terminator_pid
-      after
-        remaining_connect_window ->
-          Logger.error("failed to connect to runner job #{job_id} within #{state.boot_timeout}ms")
-          SlurmClient.delete_job!(job_id)
-          exit(:timeout)
+              System.monotonic_time(:millisecond) + remaining_connect_window
+          end
+
+        await_remote_up(state, job_id, deadline)
+
+      {:error, reason} = error ->
+        Logger.error("failed to submit Slurm job: #{inspect(reason)}")
+        error
+    end
+  end
+
+  # Waits for the runner to connect back while polling Slurm, so a job that
+  # fails or is cancelled before connecting does not block until boot_timeout.
+  defp await_remote_up(%FLAMESlurmBackend{parent_ref: parent_ref} = state, job_id, deadline) do
+    remaining =
+      case deadline do
+        :infinity -> :infinity
+        deadline -> max(deadline - System.monotonic_time(:millisecond), 0)
       end
 
-    new_state =
-      struct!(new_state,
-        remote_terminator_pid: remote_terminator_pid,
-        runner_node_name: node(remote_terminator_pid)
-      )
+    receive do
+      {^parent_ref, {:remote_up, remote_terminator_pid}} ->
+        log(state, "Remote flame is Up!", job_id: job_id)
 
-    {:ok, remote_terminator_pid, new_state}
+        new_state =
+          struct!(state,
+            job_id: job_id,
+            remote_terminator_pid: remote_terminator_pid,
+            runner_node_name: node(remote_terminator_pid)
+          )
+
+        {:ok, remote_terminator_pid, new_state}
+    after
+      # Atoms sort after integers, so this also caps :infinity
+      min(remaining, state.job_poll_interval) ->
+        job_state = SlurmClient.job_state(job_id)
+
+        cond do
+          SlurmClient.terminal_state?(job_state) ->
+            Logger.error("Slurm job #{job_id} ended with state #{job_state} before connecting")
+            {:error, {:job_ended, job_id, job_state}}
+
+          remaining <= state.job_poll_interval ->
+            Logger.error(
+              "failed to connect to runner job #{job_id} within #{state.boot_timeout}ms"
+            )
+
+            SlurmClient.delete_job(job_id)
+            exit(:timeout)
+
+          true ->
+            await_remote_up(state, job_id, deadline)
+        end
+    end
   end
 
   @impl true

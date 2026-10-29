@@ -38,6 +38,7 @@ Configure the flame backend in our configuration or application setup:
    timeout: :infinity,
    boot_timeout: 360000,
    track_resources: true,
+   backend: {FLAMESlurmBackend,
     slurm_job: """
       #!/bin/bash
       #SBATCH -o flame.%j.out
@@ -47,7 +48,7 @@ Configure the flame backend in our configuration or application setup:
       #SBATCH --mem=20G
 
       export SLURM_FLAME_HOST=$(ip -f inet addr show ib0 | awk '/inet/ {print $2}' | cut -d/ -f1)
-      """
+      """}
     }
   ]
 ```
