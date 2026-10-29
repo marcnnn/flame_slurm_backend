@@ -1,0 +1,6 @@
+{application, ucx_dist,
+ [{description, "Erlang distribution carrier over UCX (InfiniBand RDMA)"},
+  {vsn, "0.1.0"},
+  {modules, [ucx_dist, ucx_dist_nif, ucx_dist_poller]},
+  {registered, [ucx_dist_poller]},
+  {applications, [kernel, stdlib]}]}.
