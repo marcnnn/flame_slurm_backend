@@ -96,6 +96,21 @@ This Job will than be scheduled if ressoucces are avaiable.
 If it not scheduled within the timeout the job is canceled to not block ressourcess that are no longer needed.
 To be able to run the runner with the correct enviorment cluster specific bash file needs to be created.
 
+## RDMA distribution (experimental)
+
+`ucx_dist/` contains an Erlang distribution carrier that sends node-to-node
+traffic over InfiniBand verbs via UCX instead of TCP over IPoIB. It needs no
+change in this backend: start the parent and the runners with
+
+```bash
+export ELIXIR_ERL_OPTIONS="-pa /path/to/ucx_dist/ebin -proto_dist ucx"
+```
+
+(export it in `slurm_job` for the runners). In our measurements it is about
+2.5-3x faster than IPoIB for 32 KB-1 MB messages and `FLAME.call`
+arguments, and 1.3-1.9x for 8-64 MB. See `ucx_dist/README.md` and
+`ucx_dist/BENCHMARKS.md`.
+
 # Cleanup
 
 Slurm is configured to send a SIGTERM signal to FLAME 30 seconds before it terminates the Job, so it starts performing any cleaning up of Flame temporary Files.
