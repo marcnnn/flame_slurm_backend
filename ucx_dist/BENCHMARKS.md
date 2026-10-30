@@ -1,11 +1,12 @@
 # Benchmarks, 2026-10-29
 
-Raw data is in `results/2026-10-29/`:
+The numbers below come from these runs. Raw output goes to `results/`, which
+is not checked in.
 
-- `run1.csv`, `run2.csv`, `run3.csv`: three runs of `bench/run_bench.sbatch`
-  between two compute nodes.
-- `flame_e2e.csv`: `bench/flame_e2e.exs` against a FLAME runner.
-- `ib_*.txt`: perftest output (the hardware ceiling).
+- Three runs of `bench/run_bench.sbatch` between two compute nodes.
+- `bench/flame_e2e.exs` against a FLAME runner.
+- perftest (`ib_send_bw`, `ib_send_lat`, `ib_write_bw`) for the hardware
+  ceiling.
 
 Columns: `carrier,test,size,iters,median_us,p99_us,mb_per_s`.
 
