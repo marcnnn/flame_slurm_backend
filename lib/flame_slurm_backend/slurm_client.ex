@@ -183,11 +183,6 @@ defmodule FLAMESlurmBackend.SlurmClient do
       {"ELIXIR_SLURM_SCRIPT", @elixir_slurm_script}
     ]
 
-    # sbatch copies the script on submission, so a unique temporary file per
-    # runner is enough and avoids races between runners booting concurrently.
-    script_path =
-      Path.join(System.tmp_dir!(), "flame_slurm_#{System.unique_integer([:positive])}.sh")
-
     # sbatch rejects scripts without an interpreter line
     slurm_job =
       if String.starts_with?(slurm_job, "#!"), do: slurm_job, else: "#!/bin/bash\n" <> slurm_job
@@ -207,36 +202,47 @@ defmodule FLAMESlurmBackend.SlurmClient do
       "--parsable",
       "--export=ALL",
       # Ask SLURM to send SIGTERM 30 sec before the time limit for a graceful shutdown
-      "--signal=B:SIGTERM@30",
-      script_path
+      "--signal=B:SIGTERM@30"
     ]
 
-    with :ok <- write_script(script_path, script) do
-      try do
-        case cmd("sbatch", args, env: env) do
-          {:error, _} = error -> error
-          {output, 0} -> parse_job_id(output)
-          {output, status} -> {:error, {:sbatch_failed, status, String.trim(output)}}
-        end
-      after
-        File.rm(script_path)
-      end
+    case submit(script, args, env) do
+      {:error, _} = error -> error
+      {output, 0} -> parse_job_id(output)
+      {output, status} -> {:error, {:sbatch_failed, status, String.trim(output)}}
     end
   end
 
-  defp write_script(path, script) do
-    case File.write(path, script) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:job_script_write_failed, path, reason}}
+  # sbatch reads the job script from stdin, so no file is written that other
+  # users could read or swap before sbatch picks it up, e.g. in a shared /tmp.
+  # The script reaches the shell in an environment variable, which only the
+  # owner can read, and is removed before sbatch exports the environment.
+  @submit_script ~S"""
+  printf '%s' "$FLAME_SLURM_JOB_SCRIPT" | {
+    unset FLAME_SLURM_JOB_SCRIPT
+    exec "$0" "$@"
+  }
+  """
+
+  defp submit(script, args, env) do
+    with {:ok, sh} <- find_executable("sh"),
+         {:ok, sbatch} <- find_executable("sbatch") do
+      env = [{"FLAME_SLURM_JOB_SCRIPT", IO.iodata_to_binary(script)} | env]
+      System.cmd(sh, ["-c", @submit_script, sbatch | args], stderr_to_stdout: true, env: env)
     end
   end
 
   # System.cmd raises when the executable is missing, e.g. when the parent
   # does not run on a Slurm login node.
   defp cmd(command, args, opts \\ []) do
+    with {:ok, path} <- find_executable(command) do
+      System.cmd(path, args, [stderr_to_stdout: true] ++ opts)
+    end
+  end
+
+  defp find_executable(command) do
     case System.find_executable(command) do
       nil -> {:error, {:executable_not_found, command}}
-      path -> System.cmd(path, args, [stderr_to_stdout: true] ++ opts)
+      path -> {:ok, path}
     end
   end
 

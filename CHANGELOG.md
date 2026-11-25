@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Security
 
 - A parent VM without distribution (no `--name`/`--sname`) no longer submits runners: `Node.get_cookie()` is then the public value `nocookie`, which let any peer on the cluster network connect to the runner and run code as the job owner. `start_job` returns `{:error, :not_distributed}`, and the runner script exits when `SLURM_COOKIE` is empty or `nocookie`.
+- The job script is passed to `sbatch` on stdin instead of a file with a predictable name in `System.tmp_dir!()` (only on `main`, never released). On a login node with a shared `/tmp`, another user could read the file or replace it before `sbatch` read it, and so run their own script as a job of the parent user with its cookie in the environment.
 
 ### Fixed
 
@@ -26,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Jobs that failed before connecting were not detected, because `squeue` hides finished jobs by default. Now uses `squeue -t all` with an `sacct` fallback.
 - `--signal=B:SIGTERM@30` is now passed to `sbatch` on the command line; as an `#SBATCH` directive after the user's script commands it was silently ignored.
 - The runner is started with `exec`, so the SIGTERM actually reaches the BEAM instead of only the batch shell.
-- Each submission uses its own temporary job script (removed after submission) instead of a shared `flame_auto.sh` in the working directory, fixing races when several runners boot at once.
+- Each submission passes its job script to `sbatch` on stdin instead of a shared `flame_auto.sh` in the working directory, fixing races when several runners boot at once.
 - `sbatch` failures return `{:error, reason}` from `remote_boot/1` instead of crashing with a `CaseClauseError`; job ids are parsed via `--parsable`, tolerating warnings and multi-cluster output.
 - A failing `scancel` on boot timeout is logged instead of crashing.
 - Negative remaining boot windows no longer crash `receive`.
