@@ -36,7 +36,21 @@ defmodule FLAMESlurmBackend.SlurmClient do
                                do: :"#{flame_base_name}@#{flame_host_name}",
                                else: :"#{flame_base_name}"
 
-                           flame_node_cookie = String.to_atom(System.fetch_env!("SLURM_COOKIE"))
+                           # A non-distributed parent would hand out the well-known
+                           # cookie "nocookie", which lets any peer on the network connect
+                           flame_node_cookie =
+                             case System.get_env("SLURM_COOKIE") do
+                               cookie when cookie in [nil, "", "nocookie"] ->
+                                 IO.puts(
+                                   :stderr,
+                                   "[Slurm] Refusing to start without a secret cookie"
+                                 )
+
+                                 System.halt(1)
+
+                               cookie ->
+                                 String.to_atom(cookie)
+                             end
 
                            flame_dep =
                              if git_ref = System.get_env("FLAME_GIT_REF") do
@@ -110,7 +124,26 @@ defmodule FLAMESlurmBackend.SlurmClient do
 
   def terminal_state?(state), do: state in @terminal_states
 
+  @doc false
+  def elixir_slurm_script, do: @elixir_slurm_script
+
   def start_job(parent_ref, slurm_job) do
+    case parent_cookie() do
+      {:ok, cookie} -> submit_job(parent_ref, slurm_job, cookie)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # Without distribution Node.get_cookie/0 returns :nocookie, a public value
+  # that would let anyone on the cluster network connect to the runner.
+  defp parent_cookie do
+    case Node.get_cookie() do
+      :nocookie -> {:error, :not_distributed}
+      cookie -> if Node.alive?(), do: {:ok, cookie}, else: {:error, :not_distributed}
+    end
+  end
+
+  defp submit_job(parent_ref, slurm_job, cookie) do
     parent =
       FLAME.Parent.new(parent_ref, self(), FLAMESlurmBackend, nil, "SLURM_FLAME_HOST")
 
@@ -145,7 +178,7 @@ defmodule FLAMESlurmBackend.SlurmClient do
     encoded_parent = FLAME.Parent.encode(parent)
 
     env = [
-      {"SLURM_COOKIE", "#{Node.get_cookie()}"},
+      {"SLURM_COOKIE", Atom.to_string(cookie)},
       {"FLAME_PARENT", encoded_parent},
       {"ELIXIR_SLURM_SCRIPT", @elixir_slurm_script}
     ]

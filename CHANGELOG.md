@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `FLAME_SLURM_BACKEND_PATH`: runners install the backend from a path, e.g. a checkout on the cluster's shared `$HOME`.
 - `:boot_backoff_base` / `:boot_backoff_max` (default 1s / 60s): failed boots back off exponentially per job script.
 
+### Security
+
+- A parent VM without distribution (no `--name`/`--sname`) no longer submits runners: `Node.get_cookie()` is then the public value `nocookie`, which let any peer on the cluster network connect to the runner and run code as the job owner. `start_job` returns `{:error, :not_distributed}`, and the runner script exits when `SLURM_COOKIE` is empty or `nocookie`.
+
 ### Fixed
 
 - Failed boots no longer flood Slurm: FLAME.Pool retries about every second while callers wait, which submitted ~300 jobs in 5 minutes during testing on allegro.
