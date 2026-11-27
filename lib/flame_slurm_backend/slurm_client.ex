@@ -36,7 +36,21 @@ defmodule FLAMESlurmBackend.SlurmClient do
                                do: :"#{flame_base_name}@#{flame_host_name}",
                                else: :"#{flame_base_name}"
 
-                           flame_node_cookie = String.to_atom(System.fetch_env!("SLURM_COOKIE"))
+                           # A non-distributed parent would hand out the well-known
+                           # cookie "nocookie", which lets any peer on the network connect
+                           flame_node_cookie =
+                             case System.get_env("SLURM_COOKIE") do
+                               cookie when cookie in [nil, "", "nocookie"] ->
+                                 IO.puts(
+                                   :stderr,
+                                   "[Slurm] Refusing to start without a secret cookie"
+                                 )
+
+                                 System.halt(1)
+
+                               cookie ->
+                                 String.to_atom(cookie)
+                             end
 
                            flame_dep =
                              if git_ref = System.get_env("FLAME_GIT_REF") do
@@ -110,7 +124,26 @@ defmodule FLAMESlurmBackend.SlurmClient do
 
   def terminal_state?(state), do: state in @terminal_states
 
+  @doc false
+  def elixir_slurm_script, do: @elixir_slurm_script
+
   def start_job(parent_ref, slurm_job) do
+    case parent_cookie() do
+      {:ok, cookie} -> submit_job(parent_ref, slurm_job, cookie)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # Without distribution Node.get_cookie/0 returns :nocookie, a public value
+  # that would let anyone on the cluster network connect to the runner.
+  defp parent_cookie do
+    case Node.get_cookie() do
+      :nocookie -> {:error, :not_distributed}
+      cookie -> if Node.alive?(), do: {:ok, cookie}, else: {:error, :not_distributed}
+    end
+  end
+
+  defp submit_job(parent_ref, slurm_job, cookie) do
     parent =
       FLAME.Parent.new(parent_ref, self(), FLAMESlurmBackend, nil, "SLURM_FLAME_HOST")
 
@@ -145,15 +178,10 @@ defmodule FLAMESlurmBackend.SlurmClient do
     encoded_parent = FLAME.Parent.encode(parent)
 
     env = [
-      {"SLURM_COOKIE", "#{Node.get_cookie()}"},
+      {"SLURM_COOKIE", Atom.to_string(cookie)},
       {"FLAME_PARENT", encoded_parent},
       {"ELIXIR_SLURM_SCRIPT", @elixir_slurm_script}
     ]
-
-    # sbatch copies the script on submission, so a unique temporary file per
-    # runner is enough and avoids races between runners booting concurrently.
-    script_path =
-      Path.join(System.tmp_dir!(), "flame_slurm_#{System.unique_integer([:positive])}.sh")
 
     # sbatch rejects scripts without an interpreter line
     slurm_job =
@@ -174,36 +202,47 @@ defmodule FLAMESlurmBackend.SlurmClient do
       "--parsable",
       "--export=ALL",
       # Ask SLURM to send SIGTERM 30 sec before the time limit for a graceful shutdown
-      "--signal=B:SIGTERM@30",
-      script_path
+      "--signal=B:SIGTERM@30"
     ]
 
-    with :ok <- write_script(script_path, script) do
-      try do
-        case cmd("sbatch", args, env: env) do
-          {:error, _} = error -> error
-          {output, 0} -> parse_job_id(output)
-          {output, status} -> {:error, {:sbatch_failed, status, String.trim(output)}}
-        end
-      after
-        File.rm(script_path)
-      end
+    case submit(script, args, env) do
+      {:error, _} = error -> error
+      {output, 0} -> parse_job_id(output)
+      {output, status} -> {:error, {:sbatch_failed, status, String.trim(output)}}
     end
   end
 
-  defp write_script(path, script) do
-    case File.write(path, script) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:job_script_write_failed, path, reason}}
+  # sbatch reads the job script from stdin, so no file is written that other
+  # users could read or swap before sbatch picks it up, e.g. in a shared /tmp.
+  # The script reaches the shell in an environment variable, which only the
+  # owner can read, and is removed before sbatch exports the environment.
+  @submit_script ~S"""
+  printf '%s' "$FLAME_SLURM_JOB_SCRIPT" | {
+    unset FLAME_SLURM_JOB_SCRIPT
+    exec "$0" "$@"
+  }
+  """
+
+  defp submit(script, args, env) do
+    with {:ok, sh} <- find_executable("sh"),
+         {:ok, sbatch} <- find_executable("sbatch") do
+      env = [{"FLAME_SLURM_JOB_SCRIPT", IO.iodata_to_binary(script)} | env]
+      System.cmd(sh, ["-c", @submit_script, sbatch | args], stderr_to_stdout: true, env: env)
     end
   end
 
   # System.cmd raises when the executable is missing, e.g. when the parent
   # does not run on a Slurm login node.
   defp cmd(command, args, opts \\ []) do
+    with {:ok, path} <- find_executable(command) do
+      System.cmd(path, args, [stderr_to_stdout: true] ++ opts)
+    end
+  end
+
+  defp find_executable(command) do
     case System.find_executable(command) do
       nil -> {:error, {:executable_not_found, command}}
-      path -> System.cmd(path, args, [stderr_to_stdout: true] ++ opts)
+      path -> {:ok, path}
     end
   end
 
