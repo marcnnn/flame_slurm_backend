@@ -24,3 +24,6 @@ flame_slurm_backend-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Benchmark output from ucx_dist/bench.
+/ucx_dist/results/
