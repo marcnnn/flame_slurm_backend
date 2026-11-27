@@ -1,7 +1,7 @@
 defmodule FlameSlurmBackend.MixProject do
   use Mix.Project
   @source_url "https://github.com/marcnnn/flame_slurm_backend"
-  @version "0.0.3-rc.0"
+  @version "0.0.3"
 
   def project do
     [
