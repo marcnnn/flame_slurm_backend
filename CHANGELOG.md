@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 <!-- ### Added | Changed | Deprecated | Removed | Fixed | Security -->
 
+## [0.0.3] - 2026-11-27
+
 ### Added
 
 - `:job_poll_interval` option (default 5s): while waiting for a runner, the job state is polled with `squeue` and boot fails early if the job ends before connecting.
@@ -46,6 +48,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 <!--------------------- Don't add new entries after this line --------------------->
 
 
-## [0.1.0] - 2024-11-02
+## [0.0.2] - 2025-05-03
 
 - Very early stage implementation of a Slurm backend.
